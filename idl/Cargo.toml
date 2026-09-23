@@ -1,0 +1,28 @@
+[package]
+name = "anchor-lang-idl"
+version = "0.1.4"
+publish = true
+repository.workspace = true
+edition = "2021"
+license = "Apache-2.0"
+description = "Anchor framework IDL"
+
+[package.metadata.docs.rs]
+workspace = true
+
+[features]
+build = ["dep:regex", "dep:serde_json"]
+convert = ["dep:heck", "dep:serde_json", "dep:sha2"]
+
+[dependencies]
+anchor-lang-idl-spec = { workspace = true }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
+
+# `convert` feature only
+heck = { version = "0.3", optional = true }
+
+# `build` feature only
+regex = { version = "1", optional = true }
+sha2 = { version = "0.10", optional = true }

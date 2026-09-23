@@ -1,0 +1,37 @@
+[package]
+name = "anchor-derive-serde"
+version.workspace = true
+publish = true
+repository.workspace = true
+license = "Apache-2.0"
+description = "Anchor Derive macro for serialization and deserialization"
+edition = "2021"
+
+[package.metadata.docs.rs]
+workspace = true
+
+[lib]
+proc-macro = true
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+
+[features]
+idl-build = ["anchor-syn/idl-build"]
+lazy-account = ["anchor-lang/lazy-account"]
+
+[dependencies]
+anchor-syn = { workspace = true, optional = true }
+proc-macro-crate = "3.4.0"
+proc-macro2 = "1"
+quote = "1"
+syn = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+# Serialization macros require `anchor-lang` to be available to locate `borsh`
+# This is required for doc testing
+anchor-lang = { path = "../../" }

@@ -1,0 +1,313 @@
+use {
+    crate::{AccountField, AccountsStruct, Ty},
+    heck::SnakeCase,
+    quote::quote,
+    std::{collections::HashSet, str::FromStr},
+};
+
+// Generates the private `__cpi_client_accounts` mod implementation, containing
+// a generated struct mapping 1-1 to the `Accounts` struct, except with
+// `AccountInfo`s as the types. This is generated for CPI clients.
+pub fn generate(
+    accs: &AccountsStruct,
+    program_id: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    generate_with_opts(accs, program_id, &HashSet::new())
+}
+
+/// Same as [`generate`], but omits `<'info>` on accounts structs that have no
+/// fields. `fieldless` must name *every* such struct in the program, because the
+/// lifetime has to be dropped both on the struct itself and on every composite
+/// field that refers to it.
+///
+/// The two consumers of this codegen know different things:
+///
+/// - `#[program]` (`codegen::program::cpi`) builds the accounts path from an
+///   identifier alone and always writes `#name<'info>`, so the struct must
+///   always carry the lifetime. An empty struct then has an unused lifetime
+///   (`E0392`, not silenceable by `allow`), so a hidden `PhantomData` field
+///   binds it.
+/// - `declare_program!` sees the whole IDL, so it can collect the fieldless
+///   struct names up front and emit the structs, their composite references and
+///   the `cpi::<ix>` signatures without the lifetime. That keeps fieldless
+///   structs constructible as `Foo {}`, which is public API for downstream users
+///   and must not break.
+pub fn generate_with_opts(
+    accs: &AccountsStruct,
+    program_id: proc_macro2::TokenStream,
+    fieldless: &HashSet<String>,
+) -> proc_macro2::TokenStream {
+    let name = &accs.ident;
+    #[allow(
+        clippy::unwrap_used,
+        reason = "computed from valid Rust identifier via snake_case"
+    )]
+    let account_mod_name: proc_macro2::TokenStream = format!(
+        "__cpi_client_accounts_{}",
+        accs.ident.to_string().to_snake_case()
+    )
+    .parse()
+    .unwrap();
+
+    let account_struct_fields: Vec<proc_macro2::TokenStream> = accs
+        .fields
+        .iter()
+        .map(|f: &AccountField| match f {
+            AccountField::CompositeField(s) => {
+                let name = &s.ident;
+                let docs = if let Some(ref docs) = s.docs {
+                    docs.iter()
+                        .map(|docs_line| {
+                            #[allow(clippy::unwrap_used, reason = "hardcoded valid doc comment syntax")]
+                            let ts = proc_macro2::TokenStream::from_str(&format!(
+                                "#[doc = r#\"{docs_line}\"#]"
+                            ))
+                            .unwrap();
+                            ts
+                        })
+                        .collect()
+                } else {
+                    quote!()
+                };
+                #[allow(
+                    clippy::unwrap_used,
+                    clippy::expect_used,
+                    reason = "symbol path is always non-empty and is a valid Rust path"
+                )]
+                let symbol: proc_macro2::TokenStream = {
+                    let symbol_path = s.symbol.split("::").collect::<Vec<_>>();
+                    let name = symbol_path
+                        .last()
+                        .expect("symbol path must have at least one segment");
+                    let prefix = symbol_path
+                        .get(..symbol_path.len().saturating_sub(1))
+                        .unwrap_or(&[]);
+                    let helper_mod = format!("__cpi_client_accounts_{}", name.to_snake_case());
+                    if prefix.is_empty() {
+                        format!("{helper_mod}::{name}")
+                    } else {
+                        format!("{}::{helper_mod}::{name}", prefix.join("::"),)
+                    }
+                    .parse()
+                    .expect("generated module path must be valid Rust tokens")
+                };
+                // A fieldless composite is generated without `<'info>`, so the
+                // field that holds it must not ask for one either. `symbol` can
+                // be a qualified path, and `fieldless` holds bare struct names.
+                let symbol_name = s.symbol.rsplit("::").next().unwrap_or(&s.symbol);
+                let lifetime = if fieldless.contains(symbol_name) {
+                    quote!()
+                } else {
+                    quote!(<'info>)
+                };
+                quote! {
+                    #docs
+                    pub #name: #symbol #lifetime
+                }
+            }
+            AccountField::Field(f) => {
+                let name = &f.ident;
+                let docs = if let Some(ref docs) = f.docs {
+                    docs.iter()
+                        .map(|docs_line| {
+                            #[allow(clippy::unwrap_used, reason = "hardcoded valid doc comment syntax")]
+                            let ts = proc_macro2::TokenStream::from_str(&format!(
+                                "#[doc = r#\"{docs_line}\"#]"
+                            ))
+                            .unwrap();
+                            ts
+                        })
+                        .collect()
+                } else {
+                    quote!()
+                };
+                if f.is_optional {
+                    quote! {
+                        #docs
+                        pub #name: Option<anchor_lang::solana_program::account_info::AccountInfo<'info>>
+                    }
+                } else {
+                    quote! {
+                        #docs
+                        pub #name: anchor_lang::solana_program::account_info::AccountInfo<'info>
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let account_struct_metas: Vec<proc_macro2::TokenStream> = accs
+        .fields
+        .iter()
+        .map(|f: &AccountField| match f {
+            AccountField::CompositeField(s) => {
+                let name = &s.ident;
+                quote! {
+                    account_metas.extend(self.#name.to_account_metas(is_signer));
+                }
+            }
+            AccountField::Field(f) => {
+                let is_signer = match f.ty {
+                    Ty::Signer => true,
+                    _ => f.constraints.is_signer(),
+                };
+                let is_signer = match is_signer {
+                    false => quote! {false},
+                    true => quote! {is_signer.unwrap_or(true)},
+                };
+                let meta = match f.constraints.is_mutable() {
+                    false => quote! { anchor_lang::solana_program::instruction::AccountMeta::new_readonly },
+                    true => quote! { anchor_lang::solana_program::instruction::AccountMeta::new },
+                };
+                let name = &f.ident;
+                if f.is_optional {
+                    quote! {
+                        if let Some(#name) = &self.#name {
+                            account_metas.push(#meta(anchor_lang::Key::key(#name), #is_signer));
+                        } else {
+                            account_metas.push(anchor_lang::solana_program::instruction::AccountMeta::new_readonly(#program_id, false));
+                        }
+                    }
+                } else {
+                    quote! {
+                        account_metas.push(#meta(anchor_lang::Key::key(&self.#name), #is_signer));
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let account_struct_infos: Vec<proc_macro2::TokenStream> = accs
+        .fields
+        .iter()
+        .map(|f: &AccountField| {
+            let name = &f.ident();
+            quote! {
+                account_infos.extend(anchor_lang::ToAccountInfos::to_account_infos(&self.#name));
+            }
+        })
+        .collect();
+
+    // Re-export all composite account structs (i.e. other structs deriving
+    // accounts embedded into this struct. Required because, these embedded
+    // structs are *not* visible from the #[program] macro, which is responsible
+    // for generating the `accounts` mod, which aggregates all the generated
+    // accounts used for structs.
+    let re_exports: Vec<proc_macro2::TokenStream> = {
+        // First, dedup the exports.
+        let mut re_exports = std::collections::HashSet::new();
+        // We need to keep track of the names we've already re-exported to avoid
+        // name collisions in the generated module.
+        let mut re_exported_names = std::collections::HashSet::new();
+
+        for f in accs.fields.iter().filter_map(|f: &AccountField| match f {
+            AccountField::CompositeField(s) => Some(s),
+            AccountField::Field(_) => None,
+        }) {
+            let symbol_path = f.symbol.split("::").collect::<Vec<_>>();
+            let name = symbol_path.last().copied().unwrap_or_default(); // Never empty for valid Rust paths
+
+            // If we've already re-exported something with this name, skip it to
+            // avoid a "name defined multiple times" error.
+            if re_exported_names.contains(name) {
+                continue;
+            }
+
+            let prefix = symbol_path
+                .get(..symbol_path.len().saturating_sub(1))
+                .unwrap_or(&[]);
+            let helper_mod = format!("__cpi_client_accounts_{}", name.to_snake_case());
+
+            if prefix.is_empty() {
+                re_exports.insert(format!("{helper_mod}::{name}"));
+            } else {
+                re_exports.insert(format!("{}::{helper_mod}::{name}", prefix.join("::")));
+            }
+            re_exported_names.insert(name.to_string());
+        }
+
+        re_exports
+            .iter()
+            .map(|symbol: &String| {
+                #[allow(
+                    clippy::unwrap_used,
+                    reason = "symbol is a known-valid module path string"
+                )]
+                let symbol: proc_macro2::TokenStream = symbol.parse().unwrap();
+                quote! {
+                    pub use #symbol;
+                }
+            })
+            .collect()
+    };
+    // See `generate_with_opts` for why an empty struct's lifetime is handled two
+    // different ways. When it is kept, a hidden `PhantomData<&'info ()>` field
+    // binds it so it is not an unused lifetime (`E0392`). That field derives
+    // `Default`, so the struct stays constructible as `Foo { ..Default::default() }`.
+    // `fieldless` is authoritative: a struct is listed there when nothing in it
+    // binds `'info`, which includes a struct whose only fields are themselves
+    // lifetime-free composites.
+    let omit_lifetime = fieldless.contains(&name.to_string());
+    let (phantom_field, extra_derives) = if account_struct_fields.is_empty() && !omit_lifetime {
+        (
+            quote! {
+                #[doc(hidden)]
+                pub __anchor_phantom: ::core::marker::PhantomData<&'info ()>
+            },
+            // leading comma: spliced into `#[derive(Debug, Clone #extra_derives)]`
+            quote! { , Default },
+        )
+    } else {
+        (quote! {}, quote! {})
+    };
+    let generics = if omit_lifetime {
+        quote! {}
+    } else {
+        quote! {<'info>}
+    };
+    #[allow(clippy::unwrap_used, reason = "hardcoded valid doc comment syntax")]
+    let struct_doc = proc_macro2::TokenStream::from_str(&format!(
+        "#[doc = \" Generated CPI struct of the accounts for [`{name}`].\"]"
+    ))
+    .unwrap();
+    quote! {
+        /// An internal, Anchor generated module. This is used (as an
+        /// implementation detail), to generate a CPI struct for a given
+        /// `#[derive(Accounts)]` implementation, where each field is an
+        /// AccountInfo.
+        ///
+        /// To access the struct in this module, one should use the sibling
+        /// [`cpi::accounts`] module (also generated), which re-exports this.
+        #[doc(hidden)]
+        pub mod #account_mod_name {
+            use super::*;
+
+            #(#re_exports)*
+
+            #struct_doc
+            #[derive(Debug, Clone #extra_derives)]
+            pub struct #name #generics {
+                #(#account_struct_fields,)*
+                #phantom_field
+            }
+
+            #[automatically_derived]
+            impl #generics anchor_lang::ToAccountMetas for #name #generics {
+                fn to_account_metas(&self, is_signer: Option<bool>) -> Vec<anchor_lang::solana_program::instruction::AccountMeta> {
+                    let mut account_metas = vec![];
+                    #(#account_struct_metas)*
+                    account_metas
+                }
+            }
+
+            #[automatically_derived]
+            impl<'info> anchor_lang::ToAccountInfos<'info> for #name #generics {
+                fn to_account_infos(&self) -> Vec<anchor_lang::solana_program::account_info::AccountInfo<'info>> {
+                    let mut account_infos = vec![];
+                    #(#account_struct_infos)*
+                    account_infos
+                }
+            }
+        }
+    }
+}

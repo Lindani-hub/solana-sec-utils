@@ -1,0 +1,44 @@
+[package]
+name = "anchor-syn"
+version.workspace = true
+publish = true
+repository.workspace = true
+license = "Apache-2.0"
+description = "Anchor syntax parsing and code generation tools"
+edition = "2021"
+
+[package.metadata.docs.rs]
+workspace = true
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+
+[features]
+allow-missing-optionals = []
+anchor-debug = []
+event-cpi = []
+hash = []
+idl-build = ["cargo_toml"]
+init-if-needed = []
+
+[dependencies]
+bs58 = "0.5"
+
+# `idl-build` feature only
+cargo_toml = { workspace = true, optional = true }
+heck = "0.3"
+# `Span::local_file` required by the `idl-build` feature was stabilized in `1.0.100`
+proc-macro2 = { version = "1.0.100", features = ["span-locations"] }
+quote = "1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.11"
+syn = { workspace = true, features = ["full", "extra-traits", "parsing"] }
+thiserror = "1"
+
+[[test]]
+name = "idl_attributes"
+required-features = ["idl-build"]

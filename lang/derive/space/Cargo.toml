@@ -1,0 +1,26 @@
+[package]
+name = "anchor-derive-space"
+version.workspace = true
+publish = true
+repository.workspace = true
+license = "Apache-2.0"
+description = "Anchor Derive macro to automatically calculate the size of a structure or an enum"
+edition = "2021"
+
+[package.metadata.docs.rs]
+workspace = true
+
+[lib]
+proc-macro = true
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { workspace = true, features = ["extra-traits", "parsing"] }

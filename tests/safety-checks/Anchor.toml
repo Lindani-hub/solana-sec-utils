@@ -1,0 +1,14 @@
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+account_info = "99YPYSHjNekPHmMB7yrTxZCV2k2pRMKEqwwcqE62NqdA"
+unchecked_account = "4es8ojkX4URUyar2pbuLXQ4WoFtUizb5EupfaEgHjYQF"
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "./test.sh"

@@ -1,0 +1,13 @@
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[programs.localnet]
+errors = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+multiple-errors = "Mu1tip1eErrors11111111111111111111111111111"
+
+[scripts]
+test = "yarn run ts-mocha -t 1000000 tests/*.ts"
+
+[surfpool]
+block_production_mode = "clock"

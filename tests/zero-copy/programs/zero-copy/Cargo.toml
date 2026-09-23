@@ -1,0 +1,25 @@
+[package]
+name = "zero-copy"
+version = "0.1.0"
+description = "Created with Anchor"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "zero_copy"
+
+[features]
+no-entrypoint = []
+cpi = ["no-entrypoint"]
+default = []
+test-sbf = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = { path = "../../../../lang" }
+bytemuck = {version = "1.4.0", features = ["derive", "min_const_generics"]}
+
+[dev-dependencies]
+anchor-client = { path = "../../../../client", features = ["debug", "async"] }
+solana-program-test = "3.1"
+solana-sdk = "3.0"

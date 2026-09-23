@@ -1,0 +1,34 @@
+name: "Setup Solana"
+description: "Setup Solana"
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3
+      name: Cache Solana Tool Suite
+      id: cache-solana
+      with:
+        path: |
+          ~/.cache/solana/
+          ~/.local/share/solana/
+        key: solana-${{ runner.os }}-v0000-${{ env.SOLANA_VERSION }}
+    - uses: nick-fields/retry@14672906e672a08bd6eeb15720e9ed3ce869cdd4 # v2
+      if: steps.cache-solana.outputs.cache-hit != 'true'
+      with:
+        retry_wait_seconds: 300
+        timeout_minutes: 2
+        max_attempts: 10
+        retry_on: error
+        shell: bash
+        # Pipe (not `$(...)`) so curl failures propagate to the retry action.
+        command: |
+          set -euo pipefail
+          curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install | sh
+    - run: echo "/home/runner/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+      shell: bash
+    - name: Verify Solana install
+      run: command -v solana-keygen || { echo "Solana install failed - solana-keygen not on PATH"; exit 1; }
+      shell: bash
+    - run: solana-keygen new --no-bip39-passphrase
+      shell: bash
+    - run: solana config set --url localhost
+      shell: bash
